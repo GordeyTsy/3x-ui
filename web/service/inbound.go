@@ -13,7 +13,9 @@ import (
 	"github.com/mhsanaei/3x-ui/v2/database"
 	"github.com/mhsanaei/3x-ui/v2/database/model"
 	"github.com/mhsanaei/3x-ui/v2/logger"
+	"github.com/mhsanaei/3x-ui/v2/tor"
 	"github.com/mhsanaei/3x-ui/v2/util/common"
+	"github.com/mhsanaei/3x-ui/v2/util/random"
 	"github.com/mhsanaei/3x-ui/v2/xray"
 
 	"gorm.io/gorm"
@@ -294,7 +296,9 @@ func (s *InboundService) AddInbound(inbound *model.Inbound) (*model.Inbound, boo
 				s.AddClientStat(tx, inbound.Id, &client)
 			}
 		}
-	} else {
+		err = s.syncTorUpstream(tx, inbound)
+	}
+	if err != nil {
 		return inbound, false, err
 	}
 
@@ -345,6 +349,9 @@ func (s *InboundService) DelInbound(id int) (bool, error) {
 	// Delete client traffics of inbounds
 	err := db.Where("inbound_id = ?", id).Delete(xray.ClientTraffic{}).Error
 	if err != nil {
+		return false, err
+	}
+	if err = db.Where("inbound_id = ?", id).Delete(&model.TorCredential{}).Error; err != nil {
 		return false, err
 	}
 	inbound, err := s.GetInbound(id)
@@ -407,6 +414,10 @@ func (s *InboundService) UpdateInbound(inbound *model.Inbound) (*model.Inbound, 
 
 	err = s.updateClientTraffics(tx, oldInbound, inbound)
 	if err != nil {
+		return inbound, false, err
+	}
+
+	if err = s.syncTorUpstream(tx, inbound); err != nil {
 		return inbound, false, err
 	}
 
@@ -481,6 +492,7 @@ func (s *InboundService) UpdateInbound(inbound *model.Inbound) (*model.Inbound, 
 	oldInbound.Protocol = inbound.Protocol
 	oldInbound.Settings = inbound.Settings
 	oldInbound.StreamSettings = inbound.StreamSettings
+	oldInbound.ProxySettings = inbound.ProxySettings
 	oldInbound.Sniffing = inbound.Sniffing
 	if inbound.Listen == "" || inbound.Listen == "0.0.0.0" || inbound.Listen == "::" || inbound.Listen == "::0" {
 		oldInbound.Tag = fmt.Sprintf("inbound-%v", inbound.Port)
@@ -556,6 +568,92 @@ func (s *InboundService) updateClientTraffics(tx *gorm.DB, oldInbound *model.Inb
 		}
 	}
 	return nil
+}
+
+func (s *InboundService) syncTorUpstream(tx *gorm.DB, inbound *model.Inbound) error {
+	proxySettings := model.ParseProxySettings(inbound.ProxySettings)
+	if !proxySettings.IsTorPerClientEnabled() || inbound.Protocol != model.VLESS {
+		if err := tx.Where("inbound_id = ?", inbound.Id).Delete(&model.TorCredential{}).Error; err != nil {
+			return err
+		}
+		var count int64
+		if err := tx.Model(&model.TorCredential{}).Count(&count).Error; err == nil && count == 0 {
+			tor.GetManager().Stop()
+		}
+		return nil
+	}
+
+	clients, err := s.GetClients(inbound)
+	if err != nil {
+		return err
+	}
+
+	existing := []model.TorCredential{}
+	if err = tx.Where("inbound_id = ?", inbound.Id).Find(&existing).Error; err != nil {
+		return err
+	}
+
+	existingMap := make(map[string]*model.TorCredential, len(existing))
+	for i := range existing {
+		existingMap[strings.ToLower(existing[i].ClientEmail)] = &existing[i]
+	}
+
+	desired := make(map[string]model.Client, len(clients))
+	for _, client := range clients {
+		email := strings.ToLower(client.Email)
+		if email == "" {
+			continue
+		}
+		desired[email] = client
+	}
+
+	for _, cred := range existing {
+		if _, ok := desired[strings.ToLower(cred.ClientEmail)]; !ok {
+			if err = tx.Delete(&model.TorCredential{}, cred.ID).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, client := range clients {
+		emailKey := strings.ToLower(client.Email)
+		if emailKey == "" {
+			continue
+		}
+		if cred, ok := existingMap[emailKey]; ok {
+			if cred.ClientEmail != client.Email {
+				if err = tx.Model(&model.TorCredential{}).Where("id = ?", cred.ID).Update("client_email", client.Email).Error; err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		username := random.Seq(24)
+		password := random.Seq(32)
+		credential := &model.TorCredential{
+			InboundID:   inbound.Id,
+			ClientEmail: client.Email,
+			Username:    username,
+			Password:    password,
+		}
+		if err = tx.Create(credential).Error; err != nil {
+			return err
+		}
+	}
+
+	if len(desired) > 0 {
+		if err := tor.GetManager().EnsureRunning(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *InboundService) GetTorCredentialsForInbound(inboundID int) ([]model.TorCredential, error) {
+	db := database.GetDB()
+	var creds []model.TorCredential
+	err := db.Where("inbound_id = ?", inboundID).Find(&creds).Error
+	return creds, err
 }
 
 func (s *InboundService) AddInboundClient(data *model.Inbound) (bool, error) {
@@ -673,7 +771,11 @@ func (s *InboundService) AddInboundClient(data *model.Inbound) (bool, error) {
 	}
 	s.xrayApi.Close()
 
-	return needRestart, tx.Save(oldInbound).Error
+	saveErr := tx.Save(oldInbound).Error
+	if saveErr == nil {
+		saveErr = s.syncTorUpstream(tx, oldInbound)
+	}
+	return needRestart, saveErr
 }
 
 func (s *InboundService) DelInboundClient(inboundId int, clientId string) (bool, error) {
@@ -761,7 +863,11 @@ func (s *InboundService) DelInboundClient(inboundId int, clientId string) (bool,
 			s.xrayApi.Close()
 		}
 	}
-	return needRestart, db.Save(oldInbound).Error
+	saveErr := db.Save(oldInbound).Error
+	if saveErr == nil {
+		saveErr = s.syncTorUpstream(db, oldInbound)
+	}
+	return needRestart, saveErr
 }
 
 func (s *InboundService) UpdateInboundClient(data *model.Inbound, clientId string) (bool, error) {
@@ -936,7 +1042,11 @@ func (s *InboundService) UpdateInboundClient(data *model.Inbound, clientId strin
 		logger.Debug("Client old email not found")
 		needRestart = true
 	}
-	return needRestart, tx.Save(oldInbound).Error
+	saveErr := tx.Save(oldInbound).Error
+	if saveErr == nil {
+		saveErr = s.syncTorUpstream(tx, oldInbound)
+	}
+	return needRestart, saveErr
 }
 
 func (s *InboundService) AddTraffic(inboundTraffics []*xray.Traffic, clientTraffics []*xray.ClientTraffic) (error, bool) {
@@ -2453,5 +2563,9 @@ func (s *InboundService) DelInboundClientByEmail(inboundId int, email string) (b
 		}
 	}
 
-	return needRestart, db.Save(oldInbound).Error
+	saveErr := db.Save(oldInbound).Error
+	if saveErr == nil {
+		saveErr = s.syncTorUpstream(db, oldInbound)
+	}
+	return needRestart, saveErr
 }

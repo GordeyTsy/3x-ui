@@ -201,6 +201,8 @@
 "destinationPort" = "Destination Port"
 "targetAddress" = "Target Address"
 "monitorDesc" = "Leave blank to listen on all IPs"
+"torProxy" = "Upstream Tor"
+"torProxyDesc" = "Give each client an isolated Tor circuit managed by the panel (requires the Tor binary in PATH)."
 "meansNoLimit" = "= Unlimited. (unit: GB)"
 "totalFlow" = "Total Flow"
 "leaveBlankToNeverExpire" = "Leave blank to never expire"

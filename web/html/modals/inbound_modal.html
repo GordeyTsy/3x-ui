@@ -85,6 +85,15 @@
                 } else {
                     inModal.inbound.stream.externalProxy = [];
                 }
+            },
+            get torProxyEnabled() {
+                return this.inbound.proxySettings?.torEnabled === true;
+            },
+            set torProxyEnabled(value) {
+                if (!(inModal.inbound.proxySettings instanceof Inbound.ProxySettings)) {
+                    inModal.inbound.proxySettings = new Inbound.ProxySettings();
+                }
+                inModal.inbound.proxySettings.setTorEnabled(value);
             }
         },
         methods: {

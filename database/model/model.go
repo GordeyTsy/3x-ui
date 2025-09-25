@@ -51,6 +51,7 @@ type Inbound struct {
 	Protocol       Protocol `json:"protocol" form:"protocol"`
 	Settings       string   `json:"settings" form:"settings"`
 	StreamSettings string   `json:"streamSettings" form:"streamSettings"`
+	ProxySettings  string   `json:"proxySettings" form:"proxySettings"`
 	Tag            string   `json:"tag" form:"tag" gorm:"unique"`
 	Sniffing       string   `json:"sniffing" form:"sniffing"`
 }
@@ -83,12 +84,18 @@ func (i *Inbound) GenXrayInboundConfig() *xray.InboundConfig {
 	if listen != "" {
 		listen = fmt.Sprintf("\"%v\"", listen)
 	}
+	proxySettings := ParseProxySettings(i.ProxySettings)
+	var proxyRaw json_util.RawMessage
+	if proxySettings.IsLegacyTag() {
+		proxyRaw = json_util.RawMessage(i.ProxySettings)
+	}
 	return &xray.InboundConfig{
 		Listen:         json_util.RawMessage(listen),
 		Port:           i.Port,
 		Protocol:       string(i.Protocol),
 		Settings:       json_util.RawMessage(i.Settings),
 		StreamSettings: json_util.RawMessage(i.StreamSettings),
+		ProxySettings:  proxyRaw,
 		Tag:            i.Tag,
 		Sniffing:       json_util.RawMessage(i.Sniffing),
 	}

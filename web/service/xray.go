@@ -1,11 +1,16 @@
 package service
 
 import (
+	"crypto/sha1"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"runtime"
+	"strings"
 	"sync"
 
+	"github.com/mhsanaei/3x-ui/v2/config"
+	"github.com/mhsanaei/3x-ui/v2/database/model"
 	"github.com/mhsanaei/3x-ui/v2/logger"
 	"github.com/mhsanaei/3x-ui/v2/xray"
 
@@ -100,6 +105,31 @@ func (s *XrayService) GetXrayConfig() (*xray.Config, error) {
 		return nil, err
 	}
 
+	var templateOutbounds []map[string]any
+	if len(xrayConfig.OutboundConfigs) > 0 {
+		if err := json.Unmarshal(xrayConfig.OutboundConfigs, &templateOutbounds); err != nil {
+			return nil, err
+		}
+	}
+	if templateOutbounds == nil {
+		templateOutbounds = []map[string]any{}
+	}
+
+	routingConfig := map[string]any{}
+	if len(xrayConfig.RouterConfig) > 0 {
+		if err := json.Unmarshal(xrayConfig.RouterConfig, &routingConfig); err != nil {
+			return nil, err
+		}
+	}
+	existingRules, _ := routingConfig["rules"].([]any)
+	if existingRules == nil {
+		existingRules = []any{}
+	}
+
+	desiredTorOutbounds := make(map[string]map[string]any)
+	desiredTorRules := make(map[string]map[string]any)
+	var desiredTorRuleOrder []string
+
 	s.inboundService.AddTraffic(nil, nil)
 
 	inbounds, err := s.inboundService.GetAllInbounds()
@@ -109,6 +139,60 @@ func (s *XrayService) GetXrayConfig() (*xray.Config, error) {
 	for _, inbound := range inbounds {
 		if !inbound.Enable {
 			continue
+		}
+		clientModels, err := s.inboundService.GetClients(inbound)
+		if err != nil {
+			return nil, err
+		}
+		proxySettings := model.ParseProxySettings(inbound.ProxySettings)
+		if proxySettings.IsTorPerClientEnabled() && inbound.Protocol == model.VLESS {
+			creds, err := s.inboundService.GetTorCredentialsForInbound(inbound.Id)
+			if err != nil {
+				return nil, err
+			}
+			credMap := make(map[string]model.TorCredential, len(creds))
+			for _, cred := range creds {
+				credMap[strings.ToLower(cred.ClientEmail)] = cred
+			}
+			for _, client := range clientModels {
+				emailKey := strings.ToLower(client.Email)
+				if emailKey == "" {
+					continue
+				}
+				cred, ok := credMap[emailKey]
+				if !ok || cred.Username == "" {
+					continue
+				}
+				tag := buildTorOutboundTag(inbound.Tag, client.Email)
+				desiredTorOutbounds[tag] = map[string]any{
+					"tag":      tag,
+					"protocol": "socks",
+					"settings": map[string]any{
+						"servers": []any{
+							map[string]any{
+								"address": config.GetTorSocksAddress(),
+								"port":    config.GetTorSocksPort(),
+								"users": []any{
+									map[string]any{
+										"user": cred.Username,
+										"pass": cred.Password,
+									},
+								},
+							},
+						},
+					},
+				}
+				ruleKey := inbound.Tag + "|" + emailKey
+				if _, exists := desiredTorRules[ruleKey]; !exists {
+					desiredTorRules[ruleKey] = map[string]any{
+						"type":        "field",
+						"inboundTag":  []any{inbound.Tag},
+						"user":        []any{client.Email},
+						"outboundTag": tag,
+					}
+					desiredTorRuleOrder = append(desiredTorRuleOrder, ruleKey)
+				}
+			}
 		}
 		// get settings clients
 		settings := map[string]any{}
@@ -188,7 +272,63 @@ func (s *XrayService) GetXrayConfig() (*xray.Config, error) {
 		inboundConfig := inbound.GenXrayInboundConfig()
 		xrayConfig.InboundConfigs = append(xrayConfig.InboundConfigs, *inboundConfig)
 	}
+
+	filteredOutbounds := make([]map[string]any, 0, len(templateOutbounds)+len(desiredTorOutbounds))
+	for _, outbound := range templateOutbounds {
+		tag, _ := outbound["tag"].(string)
+		if strings.HasPrefix(tag, torOutboundPrefix) {
+			if cfg, ok := desiredTorOutbounds[tag]; ok {
+				filteredOutbounds = append(filteredOutbounds, cfg)
+				delete(desiredTorOutbounds, tag)
+			}
+			continue
+		}
+		filteredOutbounds = append(filteredOutbounds, outbound)
+	}
+	for _, outbound := range desiredTorOutbounds {
+		filteredOutbounds = append(filteredOutbounds, outbound)
+	}
+
+	outBytes, err := json.MarshalIndent(filteredOutbounds, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	xrayConfig.OutboundConfigs = outBytes
+
+	filteredRules := make([]any, 0, len(existingRules)+len(desiredTorRuleOrder))
+	for _, rawRule := range existingRules {
+		ruleMap, ok := rawRule.(map[string]any)
+		if !ok {
+			filteredRules = append(filteredRules, rawRule)
+			continue
+		}
+		outboundTag, _ := ruleMap["outboundTag"].(string)
+		if strings.HasPrefix(outboundTag, torOutboundPrefix) {
+			continue
+		}
+		filteredRules = append(filteredRules, rawRule)
+	}
+	for _, key := range desiredTorRuleOrder {
+		filteredRules = append(filteredRules, desiredTorRules[key])
+	}
+	routingConfig["rules"] = filteredRules
+	routeBytes, err := json.MarshalIndent(routingConfig, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	xrayConfig.RouterConfig = routeBytes
+
 	return xrayConfig, nil
+}
+
+const torOutboundPrefix = "tor-up-"
+
+var inboundTagSanitizer = strings.NewReplacer(":", "-", " ", "-", ".", "-", "/", "-")
+
+func buildTorOutboundTag(inboundTag, email string) string {
+	sanitizedTag := inboundTagSanitizer.Replace(strings.ToLower(inboundTag))
+	hash := sha1.Sum([]byte(strings.ToLower(email)))
+	return fmt.Sprintf("%s%s-%x", torOutboundPrefix, sanitizedTag, hash[:4])
 }
 
 // GetXrayTraffic fetches the current traffic statistics from the running Xray process.
