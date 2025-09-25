@@ -1030,6 +1030,7 @@
           protocol: baseInbound.protocol,
           settings: Inbound.Settings.getSettings(baseInbound.protocol).toString(),
           streamSettings: baseInbound.stream.toString(),
+          proxySettings: baseInbound.proxySettings.toString(),
           sniffing: baseInbound.sniffing.toString(),
         };
         await this.submit('/panel/api/inbounds/add', data, inModal);
@@ -1081,6 +1082,8 @@
         } else if (inbound.stream?.sockopt) {
           data.streamSettings = JSON.stringify({ sockopt: inbound.stream.sockopt.toJson() }, null, 2);
         }
+        const proxySettings = inbound.proxySettings?.toString();
+        data.proxySettings = proxySettings || '';
         data.sniffing = inbound.sniffing.toString();
 
         await this.submit('/panel/api/inbounds/add', data, inModal);
@@ -1106,6 +1109,8 @@
         } else if (inbound.stream?.sockopt) {
           data.streamSettings = JSON.stringify({ sockopt: inbound.stream.sockopt.toJson() }, null, 2);
         }
+        const proxySettings = inbound.proxySettings?.toString();
+        data.proxySettings = proxySettings || '';
         data.sniffing = inbound.sniffing.toString();
 
         await this.submit(`/panel/api/inbounds/update/${dbInbound.id}`, data, inModal);

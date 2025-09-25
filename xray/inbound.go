@@ -14,6 +14,7 @@ type InboundConfig struct {
 	Protocol       string               `json:"protocol"`
 	Settings       json_util.RawMessage `json:"settings"`
 	StreamSettings json_util.RawMessage `json:"streamSettings"`
+	ProxySettings  json_util.RawMessage `json:"proxySettings,omitempty"`
 	Tag            string               `json:"tag"`
 	Sniffing       json_util.RawMessage `json:"sniffing"`
 }
@@ -33,6 +34,9 @@ func (c *InboundConfig) Equals(other *InboundConfig) bool {
 		return false
 	}
 	if !bytes.Equal(c.StreamSettings, other.StreamSettings) {
+		return false
+	}
+	if !bytes.Equal(c.ProxySettings, other.ProxySettings) {
 		return false
 	}
 	if c.Tag != other.Tag {

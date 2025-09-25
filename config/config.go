@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -98,6 +99,50 @@ func GetDBFolderPath() string {
 // GetDBPath returns the full path to the database file.
 func GetDBPath() string {
 	return fmt.Sprintf("%s/%s.db", GetDBFolderPath(), GetName())
+}
+
+// GetTorBinaryPath returns the path to the tor executable. It defaults to relying on the PATH lookup.
+func GetTorBinaryPath() string {
+	if bin := os.Getenv("XUI_TOR_BIN"); bin != "" {
+		return bin
+	}
+	return "tor"
+}
+
+// GetTorDataDir returns the directory where tor runtime state (like cached circuits) is stored.
+func GetTorDataDir() string {
+	if dir := os.Getenv("XUI_TOR_DATA_DIR"); dir != "" {
+		return dir
+	}
+	return filepath.Join(GetDBFolderPath(), "tor")
+}
+
+// GetTorSocksAddress returns the listening address used by the managed tor SOCKS proxy.
+func GetTorSocksAddress() string {
+	if addr := os.Getenv("XUI_TOR_SOCKS_ADDR"); addr != "" {
+		return addr
+	}
+	return "127.0.0.1"
+}
+
+// GetTorSocksPort returns the port number for the managed tor SOCKS proxy.
+func GetTorSocksPort() int {
+	if val := os.Getenv("XUI_TOR_SOCKS_PORT"); val != "" {
+		if port, err := strconv.Atoi(val); err == nil {
+			return port
+		}
+	}
+	return 19050
+}
+
+// GetTorControlPort returns the control port used for tor health checks.
+func GetTorControlPort() int {
+	if val := os.Getenv("XUI_TOR_CONTROL_PORT"); val != "" {
+		if port, err := strconv.Atoi(val); err == nil {
+			return port
+		}
+	}
+	return 19051
 }
 
 // GetLogFolder returns the path to the log folder based on environment variables or platform defaults.
