@@ -8,7 +8,7 @@ plain='\033[0m'
 
 cur_dir=$(pwd)
 
-REPO_OWNER=${REPO_OWNER:-runetfreedom}
+REPO_OWNER=${REPO_OWNER:-GordeyTsy}
 REPO_NAME=${REPO_NAME:-3x-ui}
 REPO_REF=${REPO_REF:-master}
 

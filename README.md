@@ -13,7 +13,7 @@ This repository continues the work of the original [3X-UI project](https://githu
 Run the installer as root. It installs required packages, builds the panel, and wires up the service units:
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/runetfreedom/3x-ui/master/install.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/GordeyTsy/3x-ui/master/install.sh)
 ```
 
 The script expects a working Go toolchain. On most Linux distributions it is installed as part of the dependency step; if it is missing, install Go manually and re-run the script.
