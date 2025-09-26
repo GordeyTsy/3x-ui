@@ -259,14 +259,41 @@ install_x-ui() {
         ref="$1"
     fi
 
-    local source_dir
-    source_dir=$(mktemp -d)
-    local archive_url="https://codeload.github.com/${REPO_OWNER}/${REPO_NAME}/tar.gz/${ref}"
+    local source_dir=""
 
-    echo -e "${green}Fetching ${REPO_OWNER}/${REPO_NAME}@${ref} ...${plain}"
-    if ! curl -Lsf "${archive_url}" | tar -xz -C "${source_dir}" --strip-components=1; then
+    local ref_candidates=("$ref")
+    if [[ "$ref" == "master" ]]; then
+        ref_candidates+=("main")
+    fi
+
+    local archive_url=""
+    local download_success=0
+
+    for idx in "${!ref_candidates[@]}"; do
+        local candidate_ref="${ref_candidates[$idx]}"
+        local candidate_dir
+        candidate_dir=$(mktemp -d)
+
+        archive_url="https://codeload.github.com/${REPO_OWNER}/${REPO_NAME}/tar.gz/${candidate_ref}"
+        echo -e "${green}Fetching ${REPO_OWNER}/${REPO_NAME}@${candidate_ref} ...${plain}"
+        if curl -Lsf "${archive_url}" | tar -xz -C "${candidate_dir}" --strip-components=1; then
+            source_dir="${candidate_dir}"
+            ref="${candidate_ref}"
+            download_success=1
+            break
+        fi
+
+        rm -rf "${candidate_dir}"
+        if (( idx < ${#ref_candidates[@]} - 1 )); then
+            echo -e "${yellow}Unable to fetch ${candidate_ref}. Trying the next available reference...${plain}"
+        fi
+    done
+
+    if [[ ${download_success} -ne 1 ]]; then
         echo -e "${red}Failed to download repository sources from ${archive_url}.${plain}"
-        rm -rf "${source_dir}"
+        if [[ -n "${source_dir}" ]]; then
+            rm -rf "${source_dir}"
+        fi
         exit 1
     fi
 
