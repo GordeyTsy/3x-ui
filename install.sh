@@ -46,25 +46,25 @@ echo "Arch: $(arch)"
 install_base() {
     case "${release}" in
     ubuntu | debian | armbian)
-        apt-get update && apt-get install -y -q wget curl tar tzdata unzip golang
+        apt-get update && apt-get install -y -q wget curl tar tzdata unzip golang build-essential pkg-config libsqlite3-dev
         ;;
     centos | rhel | almalinux | rocky | ol)
-        yum -y update && yum install -y -q wget curl tar tzdata unzip golang
+        yum -y update && yum install -y -q wget curl tar tzdata unzip golang gcc gcc-c++ make pkgconfig sqlite-devel
         ;;
     fedora | amzn | virtuozzo)
-        dnf -y update && dnf install -y -q wget curl tar tzdata unzip golang
+        dnf -y update && dnf install -y -q wget curl tar tzdata unzip golang gcc gcc-c++ make pkgconf sqlite-devel
         ;;
     arch | manjaro | parch)
-        pacman -Syu && pacman -Syu --noconfirm wget curl tar tzdata unzip go
+        pacman -Syu && pacman -Syu --noconfirm wget curl tar tzdata unzip go base-devel sqlite pkgconf
         ;;
     opensuse-tumbleweed)
-        zypper refresh && zypper -q install -y wget curl tar timezone unzip go
+        zypper refresh && zypper -q install -y wget curl tar timezone unzip go gcc gcc-c++ make pkg-config sqlite3-devel
         ;;
     alpine)
-        apk update && apk add wget curl tar tzdata unzip go
+        apk update && apk add wget curl tar tzdata unzip go build-base sqlite-dev
         ;;
     *)
-        apt-get update && apt-get install -y -q wget curl tar tzdata unzip golang
+        apt-get update && apt-get install -y -q wget curl tar tzdata unzip golang build-essential pkg-config libsqlite3-dev
         ;;
     esac
 }
@@ -320,9 +320,9 @@ install_x-ui() {
     pushd "${source_dir}" >/dev/null || exit 1
 
     if [[ -n "${goarm}" ]]; then
-        GOOS="${goos}" GOARCH="${goarch}" GOARM="${goarm}" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o x-ui main.go
+        GOOS="${goos}" GOARCH="${goarch}" GOARM="${goarm}" CGO_ENABLED=1 go build -trimpath -ldflags "-s -w" -o x-ui main.go
     else
-        GOOS="${goos}" GOARCH="${goarch}" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o x-ui main.go
+        GOOS="${goos}" GOARCH="${goarch}" CGO_ENABLED=1 go build -trimpath -ldflags "-s -w" -o x-ui main.go
     fi
 
     if [[ $? -ne 0 ]]; then
