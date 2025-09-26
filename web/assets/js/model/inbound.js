@@ -1047,6 +1047,7 @@ class Inbound extends XrayCommonClass {
         protocol = Protocols.VLESS,
         settings = null,
         streamSettings = new StreamSettings(),
+        proxySettings = new Inbound.ProxySettings(),
         tag = '',
         sniffing = new Sniffing(),
         clientStats = '',
@@ -1057,6 +1058,7 @@ class Inbound extends XrayCommonClass {
         this._protocol = protocol;
         this.settings = ObjectUtil.isEmpty(settings) ? Inbound.Settings.getSettings(protocol) : settings;
         this.stream = streamSettings;
+        this.proxySettings = proxySettings instanceof Inbound.ProxySettings ? proxySettings : new Inbound.ProxySettings();
         this.tag = tag;
         this.sniffing = sniffing;
         this.clientStats = clientStats;
@@ -1670,12 +1672,14 @@ class Inbound extends XrayCommonClass {
     }
 
     static fromJson(json = {}) {
+        const proxySettings = Inbound.ProxySettings.fromJson(json.proxySettings);
         return new Inbound(
             json.port,
             json.listen,
             json.protocol,
             Inbound.Settings.fromJson(json.protocol, json.settings),
             StreamSettings.fromJson(json.streamSettings),
+            proxySettings,
             json.tag,
             Sniffing.fromJson(json.sniffing),
             json.clientStats
@@ -1687,12 +1691,14 @@ class Inbound extends XrayCommonClass {
         if (this.canEnableStream() || this.stream?.sockopt) {
             streamSettings = this.stream.toJson();
         }
+        const proxySettings = this.proxySettings?.toJson?.();
         return {
             port: this.port,
             listen: this.listen,
             protocol: this.protocol,
             settings: this.settings instanceof XrayCommonClass ? this.settings.toJson() : this.settings,
             streamSettings: streamSettings,
+            ...(proxySettings ? { proxySettings: proxySettings } : {}),
             tag: this.tag,
             sniffing: this.sniffing.toJson(),
             clientStats: this.clientStats
@@ -1736,6 +1742,83 @@ Inbound.Settings = class extends XrayCommonClass {
 
     toJson() {
         return {};
+    }
+};
+
+Inbound.ProxySettings = class extends XrayCommonClass {
+    constructor(mode = '', options = {}) {
+        super();
+        this.mode = mode;
+        this.tag = options.tag || '';
+        this.transportLayer = options.transportLayer === true;
+        const tor = options.tor || {};
+        if (Object.keys(tor).length > 0) {
+            this.tor = {
+                enabled: tor.enabled === true,
+                isolation: tor.isolation || 'per-client',
+            };
+        } else {
+            this.tor = undefined;
+        }
+    }
+
+    static fromJson(json = {}) {
+        if (!json || Object.keys(json).length === 0) {
+            return new Inbound.ProxySettings();
+        }
+        if (!ObjectUtil.isEmpty(json.tag)) {
+            return new Inbound.ProxySettings('', { tag: json.tag, transportLayer: json.transportLayer === true });
+        }
+        return new Inbound.ProxySettings(json.mode || (json.tor?.enabled ? 'tor' : ''), {
+            tor: json.tor,
+        });
+    }
+
+    get torEnabled() {
+        return this.mode === 'tor' && this.tor?.enabled === true;
+    }
+
+    setTorEnabled(enabled) {
+        if (enabled) {
+            this.mode = 'tor';
+            this.tor = {
+                enabled: true,
+                isolation: 'per-client',
+            };
+        } else {
+            this.mode = '';
+            this.tor = undefined;
+        }
+        this.tag = '';
+        this.transportLayer = false;
+    }
+
+    toJson() {
+        if (!ObjectUtil.isEmpty(this.tag)) {
+            const legacy = { tag: this.tag };
+            if (this.transportLayer) {
+                legacy.transportLayer = true;
+            }
+            return legacy;
+        }
+        if (this.torEnabled) {
+            return {
+                mode: 'tor',
+                tor: {
+                    enabled: true,
+                    isolation: this.tor?.isolation || 'per-client',
+                },
+            };
+        }
+        return undefined;
+    }
+
+    toString(format = true) {
+        const json = this.toJson();
+        if (!json) {
+            return '';
+        }
+        return format ? JSON.stringify(json, null, 2) : JSON.stringify(json);
     }
 };
 

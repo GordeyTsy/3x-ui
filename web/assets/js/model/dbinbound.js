@@ -18,6 +18,7 @@ class DBInbound {
         this.protocol = "";
         this.settings = "";
         this.streamSettings = "";
+        this.proxySettings = "";
         this.tag = "";
         this.sniffing = "";
         this.clientStats = ""
@@ -101,6 +102,15 @@ class DBInbound {
             streamSettings = JSON.parse(this.streamSettings);
         }
 
+        let proxySettings = {};
+        if (!ObjectUtil.isEmpty(this.proxySettings)) {
+            try {
+                proxySettings = JSON.parse(this.proxySettings);
+            } catch (e) {
+                proxySettings = {};
+            }
+        }
+
         let sniffing = {};
         if (!ObjectUtil.isEmpty(this.sniffing)) {
             sniffing = JSON.parse(this.sniffing);
@@ -112,6 +122,7 @@ class DBInbound {
             protocol: this.protocol,
             settings: settings,
             streamSettings: streamSettings,
+            proxySettings: proxySettings,
             tag: this.tag,
             sniffing: sniffing,
             clientStats: this.clientStats,
