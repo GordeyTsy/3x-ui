@@ -8,6 +8,10 @@ plain='\033[0m'
 
 cur_dir=$(pwd)
 
+REPO_OWNER=${REPO_OWNER:-runetfreedom}
+REPO_NAME=${REPO_NAME:-3x-ui}
+REPO_REF=${REPO_REF:-master}
+
 # check root
 [[ $EUID -ne 0 ]] && echo -e "${red}Fatal error: ${plain} Please run this script with root privilege \n " && exit 1
 
@@ -42,27 +46,36 @@ echo "Arch: $(arch)"
 install_base() {
     case "${release}" in
     ubuntu | debian | armbian)
-        apt-get update && apt-get install -y -q wget curl tar tzdata
+        apt-get update && apt-get install -y -q wget curl tar tzdata unzip golang
         ;;
     centos | rhel | almalinux | rocky | ol)
-        yum -y update && yum install -y -q wget curl tar tzdata
+        yum -y update && yum install -y -q wget curl tar tzdata unzip golang
         ;;
     fedora | amzn | virtuozzo)
-        dnf -y update && dnf install -y -q wget curl tar tzdata
+        dnf -y update && dnf install -y -q wget curl tar tzdata unzip golang
         ;;
     arch | manjaro | parch)
-        pacman -Syu && pacman -Syu --noconfirm wget curl tar tzdata
+        pacman -Syu && pacman -Syu --noconfirm wget curl tar tzdata unzip go
         ;;
     opensuse-tumbleweed)
-        zypper refresh && zypper -q install -y wget curl tar timezone
+        zypper refresh && zypper -q install -y wget curl tar timezone unzip go
         ;;
     alpine)
-        apk update && apk add wget curl tar tzdata
+        apk update && apk add wget curl tar tzdata unzip go
         ;;
     *)
-        apt-get update && apt-get install -y -q wget curl tar tzdata
+        apt-get update && apt-get install -y -q wget curl tar tzdata unzip golang
         ;;
     esac
+}
+
+ensure_go() {
+    if command -v go >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo -e "${red}Go binary could not be located. Please install Go manually and re-run the installer.${plain}"
+    exit 1
 }
 
 gen_random_string() {
@@ -142,97 +155,212 @@ config_after_install() {
     /usr/local/x-ui/x-ui migrate
 }
 
-install_x-ui() {
-    cd /usr/local/
+map_xray_asset() {
+    local cpu_arch="$1"
+    case "${cpu_arch}" in
+    amd64)
+        echo "64"
+        ;;
+    386)
+        echo "32"
+        ;;
+    arm64)
+        echo "arm64-v8a"
+        ;;
+    armv7)
+        echo "arm32-v7a"
+        ;;
+    armv6)
+        echo "arm32-v6"
+        ;;
+    armv5)
+        echo "arm32-v5"
+        ;;
+    s390x)
+        echo "s390x"
+        ;;
+    loong64)
+        echo "loong64"
+        ;;
+    mips32)
+        echo "mips32"
+        ;;
+    mips32le)
+        echo "mips32le"
+        ;;
+    mips64)
+        echo "mips64"
+        ;;
+    mips64le)
+        echo "mips64le"
+        ;;
+    ppc64)
+        echo "ppc64"
+        ;;
+    ppc64le)
+        echo "ppc64le"
+        ;;
+    riscv64)
+        echo "riscv64"
+        ;;
+    *)
+        return 1
+        ;;
+    esac
+}
 
-    # Download resources
-    if [ $# == 0 ]; then
-        tag_version=$(curl -Ls "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-        if [[ ! -n "$tag_version" ]]; then
-            echo -e "${yellow}Trying to fetch version with IPv4...${plain}"
-            tag_version=$(curl -4 -Ls "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-            if [[ ! -n "$tag_version" ]]; then
-                echo -e "${red}Failed to fetch x-ui version, it may be due to GitHub API restrictions, please try it later${plain}"
-                exit 1
-            fi
-        fi
-        echo -e "Got x-ui latest version: ${tag_version}, beginning the installation..."
-        wget --inet4-only -N -O /usr/local/x-ui-linux-$(arch).tar.gz https://github.com/MHSanaei/3x-ui/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz
-        if [[ $? -ne 0 ]]; then
-            echo -e "${red}Downloading x-ui failed, please be sure that your server can access GitHub ${plain}"
-            exit 1
-        fi
-    else
-        tag_version=$1
-        tag_version_numeric=${tag_version#v}
-        min_version="2.3.5"
+install_xray_assets() {
+    local target_dir="$1"
+    local cpu_arch="$(arch)"
+    local asset
+    asset=$(map_xray_asset "${cpu_arch}") || {
+        echo -e "${red}Unsupported architecture ${cpu_arch} for Xray binary.${plain}"
+        exit 1
+    }
 
-        if [[ "$(printf '%s\n' "$min_version" "$tag_version_numeric" | sort -V | head -n1)" != "$min_version" ]]; then
-            echo -e "${red}Please use a newer version (at least v2.3.5). Exiting installation.${plain}"
-            exit 1
-        fi
-
-        url="https://github.com/MHSanaei/3x-ui/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz"
-        echo -e "Beginning to install x-ui $1"
-        wget --inet4-only -N -O /usr/local/x-ui-linux-$(arch).tar.gz ${url}
-        if [[ $? -ne 0 ]]; then
-            echo -e "${red}Download x-ui $1 failed, please check if the version exists ${plain}"
-            exit 1
-        fi
+    local runtime_name="xray-linux-${cpu_arch}"
+    if [[ "${cpu_arch}" == "armv7" || "${cpu_arch}" == "armv6" || "${cpu_arch}" == "armv5" ]]; then
+        runtime_name="xray-linux-arm"
     fi
-    wget --inet4-only -O /usr/bin/x-ui-temp https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh
-    if [[ $? -ne 0 ]]; then
-        echo -e "${red}Failed to download x-ui.sh${plain}"
+
+    local temp_dir
+    temp_dir=$(mktemp -d)
+    local xray_url="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${asset}.zip"
+
+    echo -e "${green}Downloading Xray-core asset (${asset})...${plain}"
+    if ! curl -Lsf "${xray_url}" -o "${temp_dir}/xray.zip"; then
+        echo -e "${red}Failed to download Xray asset from ${xray_url}.${plain}"
+        rm -rf "${temp_dir}"
         exit 1
     fi
 
-    # Stop x-ui service and remove old resources
-    if [[ -e /usr/local/x-ui/ ]]; then
+    if ! unzip -q "${temp_dir}/xray.zip" -d "${temp_dir}"; then
+        echo -e "${red}Failed to extract Xray archive.${plain}"
+        rm -rf "${temp_dir}"
+        exit 1
+    fi
+
+    install -d "${target_dir}"
+
+    install -m 755 "${temp_dir}/xray" "${target_dir}/${runtime_name}"
+    if [[ -f "${temp_dir}/geoip.dat" ]]; then
+        install -m 644 "${temp_dir}/geoip.dat" "${target_dir}/geoip.dat"
+    fi
+    if [[ -f "${temp_dir}/geosite.dat" ]]; then
+        install -m 644 "${temp_dir}/geosite.dat" "${target_dir}/geosite.dat"
+    fi
+
+    rm -rf "${temp_dir}"
+}
+
+install_x-ui() {
+    local ref="$REPO_REF"
+    if [[ $# -gt 0 ]]; then
+        ref="$1"
+    fi
+
+    local source_dir
+    source_dir=$(mktemp -d)
+    local archive_url="https://codeload.github.com/${REPO_OWNER}/${REPO_NAME}/tar.gz/${ref}"
+
+    echo -e "${green}Fetching ${REPO_OWNER}/${REPO_NAME}@${ref} ...${plain}"
+    if ! curl -Lsf "${archive_url}" | tar -xz -C "${source_dir}" --strip-components=1; then
+        echo -e "${red}Failed to download repository sources from ${archive_url}.${plain}"
+        rm -rf "${source_dir}"
+        exit 1
+    fi
+
+    echo -e "${green}Building backend binary...${plain}"
+
+    local goarch="$(arch)"
+    local goos="linux"
+    local goarm=""
+    case "${goarch}" in
+    armv7)
+        goarch="arm"
+        goarm="7"
+        ;;
+    armv6)
+        goarch="arm"
+        goarm="6"
+        ;;
+    armv5)
+        goarch="arm"
+        goarm="5"
+        ;;
+    esac
+
+    pushd "${source_dir}" >/dev/null || exit 1
+
+    if [[ -n "${goarm}" ]]; then
+        GOOS="${goos}" GOARCH="${goarch}" GOARM="${goarm}" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o x-ui main.go
+    else
+        GOOS="${goos}" GOARCH="${goarch}" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o x-ui main.go
+    fi
+
+    if [[ $? -ne 0 ]]; then
+        echo -e "${red}Go build failed.${plain}"
+        popd >/dev/null
+        rm -rf "${source_dir}"
+        exit 1
+    fi
+
+    chmod +x x-ui x-ui.sh
+
+    local install_dir="/usr/local/x-ui"
+    if [[ -d "${install_dir}" ]]; then
         if [[ $release == "alpine" ]]; then
             rc-service x-ui stop
         else
-            systemctl stop x-ui
+            systemctl stop x-ui 2>/dev/null || true
         fi
-        rm /usr/local/x-ui/ -rf
+        rm -rf "${install_dir}"
     fi
 
-    # Extract resources and set permissions
-    tar zxvf x-ui-linux-$(arch).tar.gz
-    rm x-ui-linux-$(arch).tar.gz -f
-    
-    cd x-ui
-    chmod +x x-ui
-    chmod +x x-ui.sh
+    install -d "${install_dir}/bin"
 
-    # Check the system's architecture and rename the file accordingly
-    if [[ $(arch) == "armv5" || $(arch) == "armv6" || $(arch) == "armv7" ]]; then
-        mv bin/xray-linux-$(arch) bin/xray-linux-arm
-        chmod +x bin/xray-linux-arm
+    local runtime_items=(config database logger media sub tor util web windows_files xray)
+    for item in "${runtime_items[@]}"; do
+        if [[ -e "${item}" ]]; then
+            cp -r "${item}" "${install_dir}/"
+        fi
+    done
+
+    install -m 755 x-ui "${install_dir}/x-ui"
+    install -m 755 x-ui.sh "${install_dir}/x-ui.sh"
+    if [[ -f x-ui.service ]]; then
+        install -m 644 x-ui.service "${install_dir}/x-ui.service"
     fi
-    chmod +x x-ui bin/xray-linux-$(arch)
+    if [[ -f x-ui.rc ]]; then
+        install -m 755 x-ui.rc "${install_dir}/x-ui.rc"
+    fi
 
-    # Update x-ui cli and se set permission
-    mv -f /usr/bin/x-ui-temp /usr/bin/x-ui
-    chmod +x /usr/bin/x-ui
+    install_xray_assets "${install_dir}/bin"
+
+    install -m 755 "${install_dir}/x-ui.sh" /usr/bin/x-ui
+
+    popd >/dev/null || true
+
+    rm -rf "${source_dir}"
+
     config_after_install
 
     if [[ $release == "alpine" ]]; then
-        wget --inet4-only -O /etc/init.d/x-ui https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.rc
-        if [[ $? -ne 0 ]]; then
-            echo -e "${red}Failed to download x-ui.rc${plain}"
-            exit 1
+        if [[ -f /usr/local/x-ui/x-ui.rc ]]; then
+            install -m 755 /usr/local/x-ui/x-ui.rc /etc/init.d/x-ui
+            rc-update add x-ui
+            rc-service x-ui start
         fi
-        chmod +x /etc/init.d/x-ui
-        rc-update add x-ui
-        rc-service x-ui start
     else
-        cp -f x-ui.service /etc/systemd/system/
-        systemctl daemon-reload
-        systemctl enable x-ui
-        systemctl start x-ui
+        if [[ -f /usr/local/x-ui/x-ui.service ]]; then
+            install -m 644 /usr/local/x-ui/x-ui.service /etc/systemd/system/x-ui.service
+            systemctl daemon-reload
+            systemctl enable x-ui
+            systemctl start x-ui
+        fi
     fi
 
-    echo -e "${green}x-ui ${tag_version}${plain} installation finished, it is running now..."
+    echo -e "${green}x-ui ${ref} installation finished, it is running now...${plain}"
     echo -e ""
     echo -e "┌───────────────────────────────────────────────────────┐
 │  ${blue}x-ui control menu usages (subcommands):${plain}              │
@@ -256,4 +384,5 @@ install_x-ui() {
 
 echo -e "${green}Running...${plain}"
 install_base
+ensure_go
 install_x-ui $1
